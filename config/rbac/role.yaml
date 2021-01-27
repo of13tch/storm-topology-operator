@@ -1,0 +1,34 @@
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- apiGroups:
+  - storm.gresearch.co.uk
+  resources:
+  - topologymanagers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - storm.gresearch.co.uk
+  resources:
+  - topologymanagers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - storm.gresearch.co.uk
+  resources:
+  - topologymanagers/status
+  verbs:
+  - get
+  - patch
+  - update

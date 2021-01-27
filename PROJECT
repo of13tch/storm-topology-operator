@@ -1,0 +1,17 @@
+domain: gresearch.co.uk
+layout: go.kubebuilder.io/v3
+projectName: storm-topology-operator
+repo: storm-topology-operator
+resources:
+- crdVersion: v1
+  group: storm
+  kind: TopologyManager
+  version: v1alpha1
+- crdVersion: v1
+  group: storm
+  kind: Topology
+  version: v1alpha1
+version: 3-alpha
+plugins:
+  manifests.sdk.operatorframework.io/v2: {}
+  scorecard.sdk.operatorframework.io/v2: {}
