@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+
+jobs:
+  build-docker-storm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Build Docker image
+        run: docker build -t storm-topology-operator .
+      - name: Export Docker image
+        run: docker image save storm-topology-operator -o storm-topology-operator.tar
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: docker-image
+          path: storm-topology-operator.tar
