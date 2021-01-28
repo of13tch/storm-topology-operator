@@ -2,19 +2,38 @@ name: CI
 
 on:
   push:
+    tags:
+      - 'v*'
 
 jobs:
-  build-docker-storm:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v2
+      - name: Compute version
+        id: version
+        run: echo ::set-output name=version::$(echo ${{ github.ref }} | sed 's,^refs/tags/,,')
       - name: Build Docker image
-        run: docker build -t storm-topology-operator .
+        run: docker build -t storm-topology-operator:${{ steps.version.outputs.version }} .
       - name: Export Docker image
-        run: docker image save storm-topology-operator -o storm-topology-operator.tar
-      - name: Upload artifact
-        uses: actions/upload-artifact@v2
+        run: docker image save storm-topology-operator:${{ steps.version.outputs.version }} -o storm-topology-operator.tar
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: docker-image
-          path: storm-topology-operator.tar
+          tag_name: ${{ steps.version.outputs.version }}
+          release_name: Release ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
+          asset_path: ./storm-topology-operator.tar
+          asset_name: storm-topology-operator.tar
+          asset_content_type: application/x-tar
