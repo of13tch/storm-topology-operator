@@ -142,6 +142,7 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *TopologyReconciler) jobStormTopology(name string, m *apiv1.ConfigMap) *batchv1.Job {
 	BackoffLimit := int32(2)
 	TTLSecondsAfterFinish := int32(0)
+	RunAsUser := int64(1000)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name + "-" + strconv.FormatInt(time.Now().Unix(), 10),
@@ -152,6 +153,9 @@ func (r *TopologyReconciler) jobStormTopology(name string, m *apiv1.ConfigMap) *
 			TTLSecondsAfterFinished: &TTLSecondsAfterFinish,
 			Template: apiv1.PodTemplateSpec{
 				Spec: apiv1.PodSpec{
+					SecurityContext: &apiv1.PodSecurityContext{
+						RunAsUser: &RunAsUser,
+					},
 					RestartPolicy: "Never",
 					Containers: []apiv1.Container{
 						{
