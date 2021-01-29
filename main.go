@@ -71,7 +71,7 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "f5acbdb3.gresearch.co.uk",
-		Namespace:              "default",
+		Namespace:              "siembol",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

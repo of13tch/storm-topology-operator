@@ -145,7 +145,7 @@ func (r *TopologyReconciler) jobStormTopology(name string, m *apiv1.ConfigMap) *
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name + "-" + strconv.FormatInt(time.Now().Unix(), 10),
-			Namespace: "default",
+			Namespace: m.Namespace,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &BackoffLimit,
