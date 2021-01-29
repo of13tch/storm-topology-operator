@@ -9,7 +9,7 @@ rules:
 - apiGroups:
   - storm.gresearch.co.uk
   resources:
-  - topologymanagers
+  - topologies
   verbs:
   - create
   - delete
@@ -21,13 +21,13 @@ rules:
 - apiGroups:
   - storm.gresearch.co.uk
   resources:
-  - topologymanagers/finalizers
+  - topologies/finalizers
   verbs:
   - update
 - apiGroups:
   - storm.gresearch.co.uk
   resources:
-  - topologymanagers/status
+  - topologies/status
   verbs:
   - get
   - patch

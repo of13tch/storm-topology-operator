@@ -24,16 +24,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"reflect"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	stormv1alpha1 "storm-topology-operator/api/v1alpha1"
-	"storm-topology-operator/storm"
+	"storm-topology-controller-configmaps/storm"
 	"strconv"
+	"strings"
 	"time"
 )
 
-// TopologyManagerReconciler reconciles a TopologyManager object
+// TopologyReconciler reconciles a Topology object
 type TopologyReconciler struct {
 	client.Client
 	Log             logr.Logger
@@ -41,14 +41,14 @@ type TopologyReconciler struct {
 	StormController storm.StormCluster
 }
 
-// +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologymanagers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologymanagers/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologymanagers/finalizers,verbs=update
+// +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologies/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
-// the TopologyManager object against the actual cluster state, and then
+// the Topology object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
 //
@@ -56,23 +56,38 @@ type TopologyReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.7.0/pkg/reconcile
 func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.WithValues("topology", req.NamespacedName)
-	// Get Object Changed
-	topology := &stormv1alpha1.Topology{}
+
+	log.Info("Invoking Reconcile loop")
+
+	topology := &apiv1.ConfigMap{}
+	running := &apiv1.ConfigMap{}
 
 	err := r.Get(ctx, req.NamespacedName, topology)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// If deleted, delete topology
-			log.Info("Stopping topology by name: " + req.Name)
-			r.StormController.KillTopologyByName(req.Name)
-			return ctrl.Result{}, nil
+	runningErr := r.Get(ctx, types.NamespacedName{
+		Namespace: req.NamespacedName.Namespace,
+		Name:      req.NamespacedName.Name + ".running",
+	}, running)
+
+	if err != nil && errors.IsNotFound(err) && runningErr == nil {
+		// This is a running topology, and it has been deleted
+		// stop topology and delete .deployed configmap
+		log.Info("Stopping topology by name: " + req.Name)
+		r.StormController.KillTopologyByName(req.Name)
+		err = r.Delete(ctx, running)
+		if err != nil {
+			log.Error(err, "Failed to delete running configmap")
+			return ctrl.Result{}, err
 		}
-		// Error reading the object - requeue the request.
-		log.Error(err, "Failed to get TopologyManager")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, nil
 	}
 
-	if topology.Status.Deployed == nil {
+	if topology.Labels["storm.topology"] != "true" {
+		log.Info("The configmap is not meant for storm, return, none of our beeswax")
+		return ctrl.Result{}, nil
+	}
+
+	// Match label 'storm.topology'	in config map
+	if runningErr != nil && errors.IsNotFound(runningErr) {
 		log.Info("The topology is not marked as deployed")
 		// Define a new deployment
 		job := r.jobStormTopology(req.Name, topology)
@@ -83,14 +98,20 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{RequeueAfter: 5.0 * time.Second, Requeue: true}, err
 		}
 
+		configMapData := make(map[string]string, 0)
+		configMapData["image"] = topology.Data["image"]
+		configMapData["args"] = topology.Data["args"]
+
 		// Set observed Spec as desired state
-		deployed := true
-		topology.Status.Deployed = &deployed
+		running = &apiv1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: req.NamespacedName.Namespace,
+				Name:      req.NamespacedName.Name + ".running",
+			},
+			Data: configMapData,
+		}
 
-		topology.Status.Args = topology.Spec.Args
-		topology.Status.Image = topology.Spec.Image
-
-		err := r.Status().Update(ctx, topology)
+		err := r.Create(ctx, running)
 		if err != nil {
 			log.Error(err, "Failed to update topology deployed status")
 			return ctrl.Result{}, err
@@ -101,13 +122,12 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// If the observed status of the topology has changed from the spec, set Deployed as nil
-	if topology.Status.Image != topology.Spec.Image ||
-		!reflect.DeepEqual(topology.Status.Args, topology.Spec.Args) {
+	if running.Data["image"] != topology.Data["image"] ||
+		running.Data["args"] != topology.Data["args"] {
 		log.Info("Topology detected Spec change, killing and marking for redeployment")
 		r.StormController.KillTopologyByName(req.Name)
-		topology.Status.Deployed = nil
 
-		err := r.Status().Update(ctx, topology)
+		err := r.Delete(ctx, running)
 		if err != nil {
 			log.Error(err, "Failed to update topology deployed status")
 			return ctrl.Result{}, err
@@ -119,13 +139,13 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-func (r *TopologyReconciler) jobStormTopology(name string, m *stormv1alpha1.Topology) *batchv1.Job {
+func (r *TopologyReconciler) jobStormTopology(name string, m *apiv1.ConfigMap) *batchv1.Job {
 	BackoffLimit := int32(2)
 	TTLSecondsAfterFinish := int32(0)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name + "-" + strconv.FormatInt(time.Now().Unix(), 10),
-			Namespace: m.Namespace,
+			Namespace: "default",
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &BackoffLimit,
@@ -136,8 +156,8 @@ func (r *TopologyReconciler) jobStormTopology(name string, m *stormv1alpha1.Topo
 					Containers: []apiv1.Container{
 						{
 							Name:  name,
-							Image: m.Spec.Image,
-							Args:  m.Spec.Args,
+							Image: m.Data["image"],
+							Args:  strings.Split(m.Data["args"], " "),
 							Env: []apiv1.EnvVar{{
 								Name:  "NIMBUS_SEEDS",
 								Value: "[\"siembol-storm-nimbus\"]",
@@ -161,6 +181,6 @@ func (r *TopologyReconciler) jobStormTopology(name string, m *stormv1alpha1.Topo
 // SetupWithManager sets up the controller with the Manager.
 func (r *TopologyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&stormv1alpha1.Topology{}).
+		For(&apiv1.ConfigMap{}).
 		Complete(r)
 }

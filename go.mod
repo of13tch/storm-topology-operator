@@ -1,4 +1,4 @@
-module storm-topology-operator
+module storm-topology-controller-configmaps
 
 go 1.15
 

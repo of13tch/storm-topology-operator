@@ -8,4 +8,4 @@ webhook:
   port: 9443
 leaderElection:
   leaderElect: true
-  resourceName: 831e6a27.gresearch.co.uk
+  resourceName: f5acbdb3.gresearch.co.uk

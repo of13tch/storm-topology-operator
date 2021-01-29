@@ -1,4 +1,0 @@
-## Append samples you want in your CSV to this file as resources ##
-resources:
-- storm_v1alpha1_topology.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples

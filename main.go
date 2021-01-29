@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"os"
+	"storm-topology-controller-configmaps/storm"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -31,9 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	stormv1alpha1 "storm-topology-operator/api/v1alpha1"
-	"storm-topology-operator/controllers"
-	storm "storm-topology-operator/storm"
+	"storm-topology-controller-configmaps/controllers"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -45,7 +44,6 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(stormv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -72,7 +70,8 @@ func main() {
 		Port:                   9443,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "831e6a27.gresearch.co.uk",
+		LeaderElectionID:       "f5acbdb3.gresearch.co.uk",
+		Namespace:              "default",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
