@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"storm-topology-controller-configmaps/storm"
@@ -40,6 +41,8 @@ type TopologyReconciler struct {
 	Scheme          *runtime.Scheme
 	StormController storm.StormCluster
 }
+
+const nimbusSeeds string = "NIMBUS_SEEDS"
 
 // +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologies/status,verbs=get;update;patch
@@ -164,7 +167,7 @@ func (r *TopologyReconciler) jobStormTopology(name string, m *apiv1.ConfigMap) *
 							Args:  strings.Split(m.Data["args"], " "),
 							Env: []apiv1.EnvVar{{
 								Name:  "NIMBUS_SEEDS",
-								Value: "[\"siembol-storm-nimbus\"]",
+								Value: os.Getenv(nimbusSeeds),
 							}, {
 								Name:  "TOPOLOGY_CLASS",
 								Value: "uk.co.gresearch.siembol.parsers.storm.StormParsingApplication",

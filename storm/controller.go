@@ -47,7 +47,7 @@ func (s *StormCluster) GetTopologyIdByName(name string) (id *string, e error) {
 	switch c := s.Client.(type) {
 	case http.Client:
 		resp, _ = c.Do(r)
-	case spnego.Client:
+	case *spnego.Client:
 		resp, _ = c.Do(r)
 	default:
 		panic("Cannot find HTTP client for Storm")
@@ -81,7 +81,7 @@ func (s *StormCluster) KillTopologyByName(name string) TopologyKillResponseAPI {
 		switch c := s.Client.(type) {
 		case http.Client:
 			resp, _ = c.Do(r)
-		case spnego.Client:
+		case *spnego.Client:
 			resp, _ = c.Do(r)
 		default:
 			panic("Cannot find HTTP client for Storm")
