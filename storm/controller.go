@@ -118,7 +118,7 @@ func MakeKerberosStormCluster() StormCluster {
 	// Get ENV kerberos.keytab & kerberos.config & kerberos.domain & kerberos.user
 	cfg, _ := config.Load(conf)
 	kt, _ := keytab.Load(ktPath)
-	cl := client.NewWithKeytab(user, domain, kt, cfg)
+	cl := client.NewWithKeytab(user, domain, kt, cfg, client.DisablePAFXFAST(true))
 
 	err := cl.Login()
 	if err != nil {
