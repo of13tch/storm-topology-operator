@@ -71,7 +71,7 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "f5acbdb3.gresearch.co.uk",
-		Namespace:              "siembol",
+		Namespace:              "default",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -79,6 +79,7 @@ func main() {
 	}
 
 	controller := storm.MakeStormClusterFromEnvironment()
+	controller.Log = ctrl.Log.WithName("storm-controller")
 
 	if err = (&controllers.TopologyReconciler{
 		Client:          mgr.GetClient(),

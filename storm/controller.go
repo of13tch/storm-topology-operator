@@ -3,6 +3,7 @@ package storm
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/go-logr/logr"
 	"github.com/jcmturner/gokrb5/v8/client"
 	"github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/keytab"
@@ -18,7 +19,7 @@ const (
 	stormUrl            string = "STORM_URL"
 	kerberosKeytab      string = "KERBEROS_KEYTAB"
 	kerberosConfig      string = "KERBEROS_CONF"
-	kerberosUser        string = "KERBEROS_USERNAME"
+	kerberosPrincipal   string = "KERBEROS_PRINCIPAL"
 	kerberosDomain      string = "KERBEROS_DOMAIN"
 )
 
@@ -36,32 +37,51 @@ type TopologyAPI struct {
 }
 
 type StormCluster struct {
-	Url    string
-	Client interface{}
+	Log            logr.Logger
+	Url            string
+	KerberosClient *client.Client
+	HttpClient     interface{}
+}
+
+func (s *StormCluster) Do(r *http.Request) (*http.Response, error) {
+	s.Log.Info("Making request to Storm" + r.Method + " " + r.RemoteAddr)
+	var resp *http.Response
+	var err error
+	switch c := s.HttpClient.(type) {
+	case http.Client:
+		s.Log.Info("Invoking the http.Client")
+		resp, err = c.Do(r)
+		if err != nil {
+			return nil, err
+		}
+	case *spnego.Client:
+		s.Log.Info("Invoking the spenego.Client")
+		s.KerberosClient.Login()
+		resp, err = c.Do(r)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		panic("No HTTP client implemented")
+	}
+	return resp, nil
 }
 
 func (s *StormCluster) GetTopologyIdByName(name string) (id *string, e error) {
 	r, err := http.NewRequest("GET", s.Url+listTopology, nil)
-
-	var resp *http.Response
-	switch c := s.Client.(type) {
-	case http.Client:
-		resp, _ = c.Do(r)
-	case *spnego.Client:
-		resp, _ = c.Do(r)
-	default:
-		panic("Cannot find HTTP client for Storm")
+	resp, err := s.Do(r)
+	if err != nil {
+		return nil, err
 	}
-
 	defer resp.Body.Close()
+
+	body, _ := ioutil.ReadAll(resp.Body)
+	var m TopologyAPI
+	err = json.Unmarshal(body, &m)
 	if err != nil {
 		return nil, err
 	}
 
-	body, _ := ioutil.ReadAll(resp.Body)
-
-	var m TopologyAPI
-	_ = json.Unmarshal(body, &m)
 	for _, x := range m.Topologies {
 		if x.Name == name {
 			return &x.Id, nil
@@ -70,63 +90,61 @@ func (s *StormCluster) GetTopologyIdByName(name string) (id *string, e error) {
 	return nil, nil
 }
 
-func (s *StormCluster) KillTopologyByName(name string) TopologyKillResponseAPI {
+func (s *StormCluster) KillTopologyByName(name string) (TopologyKillResponseAPI, error) {
 	id, _ := s.GetTopologyIdByName(name)
 
 	if id != nil {
 		api := fmt.Sprintf(killTopologyCommand, *id, 0)
 		r, _ := http.NewRequest("POST", s.Url+api, nil)
-
-		var resp *http.Response
-		switch c := s.Client.(type) {
-		case http.Client:
-			resp, _ = c.Do(r)
-		case *spnego.Client:
-			resp, _ = c.Do(r)
-		default:
-			panic("Cannot find HTTP client for Storm")
+		resp, err := s.Do(r)
+		if err != nil {
+			return TopologyKillResponseAPI{}, err
 		}
-		fmt.Println(resp)
 		defer resp.Body.Close()
-		body, _ := ioutil.ReadAll(resp.Body)
 
+		fmt.Println(resp)
+		body, _ := ioutil.ReadAll(resp.Body)
 		var m TopologyKillResponseAPI
 		_ = json.Unmarshal(body, &m)
-		return m
+		return m, nil
 	}
-	return TopologyKillResponseAPI{}
+	return TopologyKillResponseAPI{}, nil
 }
 
 func MakeKerberosStormCluster() StormCluster {
-	conf := os.Getenv(kerberosConfig)
-	domain := os.Getenv(kerberosDomain)
-	ktPath := os.Getenv(kerberosKeytab)
-	user := os.Getenv(kerberosUser)
-	url := os.Getenv(stormUrl)
+	conf, domain, ktPath, user, url := os.Getenv(kerberosConfig), os.Getenv(kerberosDomain), os.Getenv(kerberosKeytab),
+		os.Getenv(kerberosPrincipal), os.Getenv(stormUrl)
 
 	// Get ENV kerberos.keytab & kerberos.config & kerberos.domain & kerberos.user
 	cfg, _ := config.Load(conf)
 	kt, _ := keytab.Load(ktPath)
 	cl := client.NewWithKeytab(user, domain, kt, cfg)
+
+	err := cl.Login()
+	if err != nil {
+		panic(err)
+	}
 	spnegoCl := spnego.NewClient(cl, nil, "")
 	return StormCluster{
-		Url:    url,
-		Client: spnegoCl,
+		Url:            url,
+		HttpClient:     spnegoCl,
+		KerberosClient: cl,
 	}
 }
 
 func MakeHttpStormCluster() StormCluster {
 	url := os.Getenv(stormUrl)
 
-	var httpCl http.Client = *http.DefaultClient
+	httpCl := *http.DefaultClient
 	return StormCluster{
-		Url:    url,
-		Client: httpCl,
+		Url:            url,
+		HttpClient:     httpCl,
+		KerberosClient: nil,
 	}
 }
 
 func MakeStormClusterFromEnvironment() StormCluster {
-	if checkEnv(kerberosUser) && checkEnv(kerberosKeytab) && checkEnv(kerberosDomain) && checkEnv(kerberosConfig) {
+	if checkEnv(kerberosPrincipal) && checkEnv(kerberosKeytab) && checkEnv(kerberosDomain) && checkEnv(kerberosConfig) {
 		return MakeKerberosStormCluster()
 	} else {
 		return MakeHttpStormCluster()

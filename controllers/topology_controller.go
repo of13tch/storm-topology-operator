@@ -75,7 +75,11 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// This is a running topology, and it has been deleted
 		// stop topology and delete .deployed configmap
 		log.Info("Stopping topology by name: " + req.Name)
-		r.StormController.KillTopologyByName(req.Name)
+		_, err := r.StormController.KillTopologyByName(req.Name)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
 		err = r.Delete(ctx, running)
 		if err != nil {
 			log.Error(err, "Failed to delete running configmap")
@@ -170,10 +174,10 @@ func (r *TopologyReconciler) jobStormTopology(name string, m *apiv1.ConfigMap) *
 								Value: os.Getenv(nimbusSeeds),
 							}, {
 								Name:  "TOPOLOGY_CLASS",
-								Value: "uk.co.gresearch.siembol.parsers.storm.StormParsingApplication",
+								Value: m.Data["class"],
 							}, {
 								Name:  "TOPOLOGY_JAR",
-								Value: "parsing-storm-1.72-SNAPSHOT.jar",
+								Value: m.Data["jar"],
 							},
 							},
 						},
