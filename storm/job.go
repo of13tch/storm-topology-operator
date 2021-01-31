@@ -93,6 +93,16 @@ func DeployStormJob(name string, m *apiv1.ConfigMap) *batchv1.Job {
 					},
 				},
 			}, {
+				Name: "krb5",
+				VolumeSource: apiv1.VolumeSource{
+					ConfigMap: &apiv1.ConfigMapVolumeSource{
+						LocalObjectReference: apiv1.LocalObjectReference{
+							Name: getEnvOrDefault("KRB5_CONFIGMAP", "krb5"),
+						},
+						DefaultMode: &executeMode,
+					},
+				},
+			}, {
 				Name: "storm-keytab",
 				VolumeSource: apiv1.VolumeSource{
 					Secret: &apiv1.SecretVolumeSource{
@@ -113,6 +123,11 @@ func DeployStormJob(name string, m *apiv1.ConfigMap) *batchv1.Job {
 				Name:      "storm-keytab",
 				MountPath: "/tmp/k.kt",
 				SubPath:   "k.kt",
+			},
+			{
+				Name:      "krb5",
+				MountPath: "/etc/krb5.conf",
+				SubPath:   "krb5.conf",
 			},
 		}
 
