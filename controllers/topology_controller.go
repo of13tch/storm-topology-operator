@@ -19,30 +19,24 @@ package controllers
 import (
 	"context"
 	"github.com/go-logr/logr"
-	batchv1 "k8s.io/api/batch/v1"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"storm-topology-controller-configmaps/storm"
-	"strconv"
-	"strings"
 	"time"
 )
 
 // TopologyReconciler reconciles a Topology object
 type TopologyReconciler struct {
 	client.Client
-	Log             logr.Logger
-	Scheme          *runtime.Scheme
-	StormController storm.StormCluster
+	Log         logr.Logger
+	Scheme      *runtime.Scheme
+	StormClient storm.StormClient
 }
-
-const nimbusSeeds string = "NIMBUS_SEEDS"
 
 // +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=storm.gresearch.co.uk,resources=topologies/status,verbs=get;update;patch
@@ -68,15 +62,16 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	err := r.Get(ctx, req.NamespacedName, topology)
 	runningErr := r.Get(ctx, types.NamespacedName{
 		Namespace: req.NamespacedName.Namespace,
-		Name:      req.NamespacedName.Name + ".running",
+		Name:      req.NamespacedName.Name + ".status",
 	}, running)
 
+	// If configmap is not found, and there is a corrosponding .status configmap - we can assume this is a topology
+	// that has been deleted, we should kill it in storm
 	if err != nil && errors.IsNotFound(err) && runningErr == nil {
-		// This is a running topology, and it has been deleted
-		// stop topology and delete .deployed configmap
 		log.Info("Stopping topology by name: " + req.Name)
-		_, err := r.StormController.KillTopologyByName(req.Name)
+		_, err := r.StormClient.KillTopologyByName(req.Name)
 		if err != nil {
+			log.Error(err, "Failed to stop topology")
 			return ctrl.Result{}, err
 		}
 
@@ -88,16 +83,19 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
+	// If the topology does not have storm.topology label, return and ignore this configmap object
 	if topology.Labels["storm.topology"] != "true" {
 		log.Info("The configmap is not meant for storm, return, none of our beeswax")
 		return ctrl.Result{}, nil
 	}
 
-	// Match label 'storm.topology'	in config map
+	// If we get here we are processing a configmap object that both exists, and has a label marking it as a topology
+	// If the corrsponding .status configmap doesn't exist it probably hasn't been deployed yet
+	// Deploy! (and create the .status configmap)
 	if runningErr != nil && errors.IsNotFound(runningErr) {
 		log.Info("The topology is not marked as deployed")
 		// Define a new deployment
-		job := r.jobStormTopology(req.Name, topology)
+		job := storm.DeployStormJob(req.Name, topology)
 		log.Info("Creating a new Job", "Deployment.Namespace", job.Namespace, "Deployment.Name", job.Name)
 		err = r.Create(ctx, job)
 		if err != nil {
@@ -113,7 +111,7 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		running = &apiv1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: req.NamespacedName.Namespace,
-				Name:      req.NamespacedName.Name + ".running",
+				Name:      req.NamespacedName.Name + ".status",
 			},
 			Data: configMapData,
 		}
@@ -128,15 +126,21 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{RequeueAfter: time.Second * 5, Requeue: true}, nil
 	}
 
-	// If the observed status of the topology has changed from the spec, set Deployed as nil
+	// If we made it all the way here, we have a topology, with a matching .status config that looks to be deployed
+	// Let's check the Spec has not changed from the Status. If it has we will delete the status and requeue which
+	// will redeploy (function above)
 	if running.Data["image"] != topology.Data["image"] ||
 		running.Data["args"] != topology.Data["args"] {
 		log.Info("Topology detected Spec change, killing and marking for redeployment")
-		r.StormController.KillTopologyByName(req.Name)
-
-		err := r.Delete(ctx, running)
+		_, err := r.StormClient.KillTopologyByName(req.Name)
 		if err != nil {
-			log.Error(err, "Failed to update topology deployed status")
+			log.Error(err, "Failed to stop topology")
+			return ctrl.Result{}, err
+		}
+
+		err = r.Delete(ctx, running)
+		if err != nil {
+			log.Error(err, "Failed to update topology spec configmap")
 			return ctrl.Result{}, err
 		}
 
@@ -144,49 +148,6 @@ func (r *TopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	return ctrl.Result{}, nil
-}
-
-func (r *TopologyReconciler) jobStormTopology(name string, m *apiv1.ConfigMap) *batchv1.Job {
-	BackoffLimit := int32(2)
-	TTLSecondsAfterFinish := int32(0)
-	RunAsUser := int64(1000)
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name + "-" + strconv.FormatInt(time.Now().Unix(), 10),
-			Namespace: m.Namespace,
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:            &BackoffLimit,
-			TTLSecondsAfterFinished: &TTLSecondsAfterFinish,
-			Template: apiv1.PodTemplateSpec{
-				Spec: apiv1.PodSpec{
-					SecurityContext: &apiv1.PodSecurityContext{
-						RunAsUser: &RunAsUser,
-					},
-					RestartPolicy: "Never",
-					Containers: []apiv1.Container{
-						{
-							Name:  name,
-							Image: m.Data["image"],
-							Args:  strings.Split(m.Data["args"], " "),
-							Env: []apiv1.EnvVar{{
-								Name:  "NIMBUS_SEEDS",
-								Value: os.Getenv(nimbusSeeds),
-							}, {
-								Name:  "TOPOLOGY_CLASS",
-								Value: m.Data["class"],
-							}, {
-								Name:  "TOPOLOGY_JAR",
-								Value: m.Data["jar"],
-							},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	return job
 }
 
 // SetupWithManager sets up the controller with the Manager.

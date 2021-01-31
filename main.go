@@ -78,14 +78,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	controller := storm.MakeStormClusterFromEnvironment()
-	controller.Log = ctrl.Log.WithName("storm-controller")
+	client := storm.MakeStormCluster()
+	client.Log = ctrl.Log.WithName("storm-controller")
 
 	if err = (&controllers.TopologyReconciler{
-		Client:          mgr.GetClient(),
-		Log:             ctrl.Log.WithName("controllers").WithName("Topology"),
-		Scheme:          mgr.GetScheme(),
-		StormController: controller,
+		Client:      mgr.GetClient(),
+		Log:         ctrl.Log.WithName("controllers").WithName("Topology"),
+		Scheme:      mgr.GetScheme(),
+		StormClient: client,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Topology")
 		os.Exit(1)
